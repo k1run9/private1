@@ -13,6 +13,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     LabeledPrice,
     Message,
+    User,
+    SuccessfulPayment,
 )
 from aiogram.exceptions import TelegramBadRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -71,13 +73,23 @@ async def grant_access(user_id: int, days: int | None, plan: str):
         creates_join_request=False,
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👉 Войти в приватный канал", url=invite.invite_link)]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="👉 Войти в приватный канал", url=invite.invite_link)]] )
     if expire_ts:
         until = datetime.fromtimestamp(expire_ts, tz=timezone.utc)
         text = f"Доступ выдан до <b>{until.strftime('%d.%m.%Y %H:%M UTC')}</b>."
     else:
         text = "Доступ выдан <b>навсегда</b>."
+    
     await bot.send_message(user_id, text, reply_markup=kb, parse_mode="HTML")
+
+    # уведомление админа
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"Новая покупка!\nПользователь: {user_id}\nТариф: {plan}"
+        )
+    except TelegramBadRequest:
+        pass
 
 async def revoke_if_expired():
     now_ts = int(datetime.now(timezone.utc).timestamp())
@@ -191,15 +203,6 @@ async def got_payment(m: Message):
         await grant_access(user_id, None, plan="forever")
         await m.answer("Оплата получена ⭐. Доступ навсегда выдан!")
 
-    # --- уведомление админа ---
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"Новая покупка!\nПользователь: {m.from_user.full_name} (@{m.from_user.username})\nТариф: {plan}"
-        )
-    except TelegramBadRequest:
-        pass
-
 # ---------------- Админ-команды ----------------
 
 @dp.message(Command("cancel"))
@@ -213,6 +216,44 @@ async def cmd_cancel(m: Message):
         await db.execute("DELETE FROM members WHERE user_id=?", (m.from_user.id,))
         await db.commit()
     await m.answer("Вы удалены из канала. Возвращайтесь в любое время через /buy.")
+
+# --------------------- Тестовая оплата (только для админа) ---------------------
+
+async def emulate_successful_payment(user_id: int, plan: str):
+    """Эмулирует успешную оплату Stars и вызывает grant_access"""
+    fake_user = User(id=user_id, is_bot=False, first_name="Тест", username="testuser")
+    payload = json.dumps({"user_id": user_id, "plan": plan})
+    await grant_access(user_id, SUB_DAYS if plan=="month" else None, plan)
+
+@dp.message(Command("test_payment"))
+async def cmd_test_payment(m: Message):
+    if m.from_user.id != ADMIN_ID:
+        await m.answer("❌ Только админ может использовать эту команду.")
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💫 Тест месяц", callback_data="test_month")],
+        [InlineKeyboardButton(text="💎 Тест навсегда", callback_data="test_forever")]
+    ])
+    await m.answer("Выберите тариф для тестовой оплаты:", reply_markup=kb)
+
+@dp.callback_query(F.data == "test_month")
+async def cb_test_month(c: CallbackQuery):
+    if c.from_user.id != ADMIN_ID:
+        await c.answer("❌ Только админ может использовать тест.", show_alert=True)
+        return
+    await emulate_successful_payment(ADMIN_ID, "month")
+    await c.answer("✅ Тестовая оплата 'Месяц' выполнена.")
+    await c.message.edit_text("Тестовая оплата выполнена. Проверьте канал и уведомление админа.")
+
+@dp.callback_query(F.data == "test_forever")
+async def cb_test_forever(c: CallbackQuery):
+    if c.from_user.id != ADMIN_ID:
+        await c.answer("❌ Только админ может использовать тест.", show_alert=True)
+        return
+    await emulate_successful_payment(ADMIN_ID, "forever")
+    await c.answer("✅ Тестовая оплата 'Навсегда' выполнена.")
+    await c.message.edit_text("Тестовая оплата выполнена. Проверьте канал и уведомление админа.")
 
 # ---------------- Startup ----------------
 
