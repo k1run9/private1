@@ -1,30 +1,3 @@
-"""
-Telegram Stars Bot: продаёт доступ в приватный канал двумя тарифами:
-- Месяц (30 дней) = 20 ⭐ (≈100 RUB)
-- Навсегда = 100 ⭐ (≈500 RUB)
-
-Функции:
-- /start, /buy: выбор тарифа
-- После оплаты — одноразовая ссылка в канал
-- Для тарифа «месяц» доступ сохраняется в БД и бот автокикает по истечении срока
-- Для тарифа «навсегда» доступ не ограничен
-
-Зависимости (requirements.txt):
-    aiogram==3.13.1
-    aiosqlite==0.20.0
-    APScheduler==3.10.4
-    python-dotenv==1.0.1
-
-ENV (.env):
-    BOT_TOKEN=123456:ABC...
-    ADMIN_ID=123456789
-    PRIVATE_CHANNEL_ID=-1001234567890     # id приватного канала (бот — админ)
-    SUB_DAYS=30                           # срок подписки в днях
-
-Запуск:
-    python stars_access_bot.py
-"""
-
 import asyncio
 import json
 import os
@@ -217,6 +190,15 @@ async def got_payment(m: Message):
     elif plan == "forever":
         await grant_access(user_id, None, plan="forever")
         await m.answer("Оплата получена ⭐. Доступ навсегда выдан!")
+
+    # --- уведомление админа ---
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"Новая покупка!\nПользователь: {m.from_user.full_name} (@{m.from_user.username})\nТариф: {plan}"
+        )
+    except TelegramBadRequest:
+        pass
 
 # ---------------- Админ-команды ----------------
 
